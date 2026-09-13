@@ -1,7 +1,9 @@
 name: DEV SSH Test
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - development
 
 jobs:
   ssh-test:

@@ -6,7 +6,7 @@ on:
       - development
 
 jobs:
-  build:
+  build-and-copy:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,3 +25,14 @@ jobs:
 
       - name: Show generated JAR
         run: ls -lh target/*.jar
+
+      - name: Copy JAR to DEV server
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.DEV_SERVER_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DEV_SSH_PORT }}
+          source: "target/*.jar"
+          target: "${{ secrets.DEV_DEPLOY_PATH }}"
+          overwrite: true

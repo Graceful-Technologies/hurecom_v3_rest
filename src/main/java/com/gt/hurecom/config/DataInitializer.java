@@ -88,6 +88,7 @@ public class DataInitializer {
                 User systemUser = new User();
                 systemUser.setEmail(systemEmail);
                 systemUser.setName("System");
+                systemUser.setMobileNumber("9700000000");
                 systemUser.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
                 systemUser.setRole(systemRole);
                 systemUser.setOrganization(null);

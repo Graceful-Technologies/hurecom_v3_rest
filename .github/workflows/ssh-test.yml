@@ -35,4 +35,3 @@ jobs:
           port: ${{ secrets.DEV_SSH_PORT }}
           source: "target/*.jar"
           target: "${{ secrets.DEV_DEPLOY_PATH }}"
-          overwrite: true

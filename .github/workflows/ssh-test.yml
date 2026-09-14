@@ -36,7 +36,7 @@ jobs:
           source: "target/hurecom-0.0.1-SNAPSHOT.jar"
           target: "${{ secrets.DEV_DEPLOY_PATH }}"
 
-      - name: Deploy and restart DEV
+      - name: Test PowerShell on DEV server
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.DEV_SERVER_HOST }}
@@ -44,60 +44,4 @@ jobs:
           key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
           port: ${{ secrets.DEV_SSH_PORT }}
           script: |
-            $ErrorActionPreference = "Stop"
-
-            $deployPath = "${{ secrets.DEV_DEPLOY_PATH }}"
-            $stagedJar = "$deployPath\target\hurecom-0.0.1-SNAPSHOT.jar"
-            $currentJar = "$deployPath\hurecom.jar"
-            $backupJar = "$deployPath\hurecom.jar.bak"
-
-            Write-Host "Stopping DEV application on port 8280..."
-
-            $processes = Get-CimInstance Win32_Process | Where-Object {
-              $_.CommandLine -like '*hurecom-0.0.1-SNAPSHOT.jar*--server.port=8280*'
-            }
-
-            foreach ($process in $processes) {
-              Write-Host "Stopping PID $($process.ProcessId)"
-              Stop-Process -Id $process.ProcessId -Force
-            }
-
-            Start-Sleep -Seconds 5
-
-            $portCheck = Get-NetTCPConnection -LocalPort 8280 -State Listen -ErrorAction SilentlyContinue
-
-            if ($portCheck) {
-              throw "Port 8280 is still in use. Deployment stopped."
-            }
-
-            Write-Host "Port 8280 is free."
-
-            if (Test-Path $currentJar) {
-              Write-Host "Creating backup..."
-              Copy-Item $currentJar $backupJar -Force
-            }
-
-            if (!(Test-Path $stagedJar)) {
-              throw "Staged JAR not found: $stagedJar"
-            }
-
-            Write-Host "Installing new JAR..."
-            Copy-Item $stagedJar $currentJar -Force
-
-            Write-Host "Starting DEV application..."
-
-            Start-Process `
-              -FilePath "C:\Program Files\Java\jdk-17\bin\java.exe" `
-              -ArgumentList "-jar","$currentJar","--server.port=8280" `
-              -WorkingDirectory $deployPath
-
-            Write-Host "Waiting for DEV application to start..."
-            Start-Sleep -Seconds 15
-
-            $portCheck = Get-NetTCPConnection -LocalPort 8280 -State Listen -ErrorAction SilentlyContinue
-
-            if (!$portCheck) {
-              throw "DEV application failed to start on port 8280."
-            }
-
-            Write-Host "DEV application is running successfully on port 8280."
+            powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Write-Host 'PowerShell works'; hostname; whoami"

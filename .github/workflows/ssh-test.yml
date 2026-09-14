@@ -65,7 +65,7 @@ jobs:
         with:
           host: ${{ secrets.DEV_SERVER_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
-          key: ${{ secrets.DEV_SSH_PORT }}
+          key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
           port: ${{ secrets.DEV_SSH_PORT }}
           source: "scripts/deploy.ps1"
           target: "${{ secrets.DEV_DEPLOY_PATH }}"

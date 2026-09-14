@@ -5,9 +5,12 @@ $ErrorActionPreference = "Stop"
 # ============================================================
 
 $deployPath = "C:\Apps\hurecom-dev"
+
 $stagedJar = "$deployPath\target\hurecom-0.0.1-SNAPSHOT.jar"
 $currentJar = "$deployPath\hurecom.jar"
 $backupJar = "$deployPath\hurecom.jar.bak"
+
+$pidFile = "$deployPath\hurecom.pid"
 
 $logsPath = "$deployPath\logs"
 $applicationLog = "$logsPath\hurecom.log"
@@ -18,7 +21,6 @@ $javaExe = "C:\Program Files\Java\jdk-17\bin\java.exe"
 $port = 8280
 $devUrl = "http://localhost:8280"
 
-# Startup timeout
 $startupTimeoutSeconds = 60
 
 
@@ -37,33 +39,49 @@ function Test-DevPort {
 }
 
 
-function Get-DevProcesses {
+function Get-TrackedDevProcess {
 
-    return @(Get-CimInstance Win32_Process | Where-Object {
+    if (!(Test-Path $pidFile)) {
+        return $null
+    }
 
-        $_.CommandLine -and
-        $_.CommandLine -match "server\.port=$port" -and
-        $_.CommandLine -match "hurecom"
+    $savedPid = Get-Content $pidFile -ErrorAction SilentlyContinue
 
-    })
+    if ([string]::IsNullOrWhiteSpace($savedPid)) {
+        return $null
+    }
+
+    $process = Get-Process `
+        -Id ([int]$savedPid) `
+        -ErrorAction SilentlyContinue
+
+    if ($null -eq $process) {
+        return $null
+    }
+
+    return $process
 }
 
 
-function Stop-DevProcesses {
+function Stop-DevProcess {
 
-    $processes = Get-DevProcesses
+    $process = Get-TrackedDevProcess
 
-    foreach ($process in $processes) {
+    if ($null -ne $process) {
 
-        Write-Host "Stopping DEV PID: $($process.ProcessId)"
+        Write-Host "Stopping tracked DEV PID: $($process.Id)"
 
         Stop-Process `
-            -Id $process.ProcessId `
+            -Id $process.Id `
             -Force `
             -ErrorAction SilentlyContinue
+
+        Start-Sleep -Seconds 5
     }
 
-    Start-Sleep -Seconds 5
+    if (Test-Path $pidFile) {
+        Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 
@@ -76,8 +94,11 @@ function Wait-ForDevStartup {
 
     while ($elapsed -lt $startupTimeoutSeconds) {
 
-        if (Test-DevPort) {
+        $trackedProcess = Get-TrackedDevProcess
 
+        if ($null -ne $trackedProcess -and (Test-DevPort)) {
+
+            Write-Host "DEV Java process is alive."
             Write-Host "DEV port 8280 is listening."
 
             return $true
@@ -179,31 +200,13 @@ Write-Host "  Date : $($stagedInfo.LastWriteTime)"
 
 
 # ============================================================
-# FIND CURRENT DEV
+# STOP CURRENT DEV
 # ============================================================
 
 Write-Host ""
-Write-Host "Checking current DEV application..."
+Write-Host "Stopping current DEV application..."
 
-$devProcesses = Get-DevProcesses
-
-foreach ($process in $devProcesses) {
-
-    Write-Host ""
-    Write-Host "DEV process found:"
-    Write-Host "  PID     : $($process.ProcessId)"
-    Write-Host "  Command : $($process.CommandLine)"
-}
-
-
-# ============================================================
-# STOP DEV
-# ============================================================
-
-Write-Host ""
-Write-Host "Stopping DEV application..."
-
-Stop-DevProcesses
+Stop-DevProcess
 
 
 # ============================================================
@@ -246,7 +249,6 @@ if (Test-Path $currentJar) {
 
     Write-Host "Backup created:"
     Write-Host $backupJar
-
 }
 else {
 
@@ -273,7 +275,7 @@ Write-Host $currentJar
 
 
 # ============================================================
-# CLEAR OLD LOGS
+# CLEAR LOGS
 # ============================================================
 
 if (Test-Path $applicationLog) {
@@ -315,6 +317,19 @@ Write-Host "PID: $($process.Id)"
 
 
 # ============================================================
+# SAVE PID
+# ============================================================
+
+Set-Content `
+    -Path $pidFile `
+    -Value $process.Id `
+    -Force
+
+Write-Host "PID saved to:"
+Write-Host $pidFile
+
+
+# ============================================================
 # WAIT FOR STARTUP
 # ============================================================
 
@@ -322,17 +337,12 @@ $started = Wait-ForDevStartup
 
 
 # ============================================================
-# NEW VERSION STARTED
+# TEST NEW VERSION
 # ============================================================
 
 if ($started) {
 
     Write-Host ""
-    Write-Host "=================================================="
-    Write-Host "       DEV APPLICATION STARTED"
-    Write-Host "=================================================="
-    Write-Host ""
-
     Write-Host "Testing HTTP endpoint..."
 
     try {
@@ -344,7 +354,6 @@ if ($started) {
             -ErrorAction Stop
 
         Write-Host "HTTP Status: $($response.StatusCode)"
-
     }
     catch {
 
@@ -354,17 +363,15 @@ if ($started) {
 
             Write-Host "HTTP Status: $statusCode"
 
-            if ($statusCode -eq 403) {
+            if ($statusCode -eq 401 -or $statusCode -eq 403) {
 
-                Write-Host "HTTP 403 is expected because Spring Security protects the root endpoint."
-
+                Write-Host "HTTP $statusCode is acceptable because Spring Security protects the endpoint."
             }
             else {
 
                 Write-Host "Unexpected HTTP status."
                 $started = $false
             }
-
         }
         else {
 
@@ -393,7 +400,6 @@ if ($started) {
     Write-Host "PID     : $($process.Id)"
     Write-Host ""
 
-    # Remove staging JAR
     if (Test-Path $stagedJar) {
 
         Write-Host "Removing staged JAR..."
@@ -423,7 +429,7 @@ Write-Host ""
 
 
 # ============================================================
-# SHOW NEW VERSION ERROR
+# SHOW ERROR
 # ============================================================
 
 Show-ApplicationError
@@ -436,7 +442,7 @@ Show-ApplicationError
 Write-Host ""
 Write-Host "Stopping failed DEV version..."
 
-Stop-DevProcesses
+Stop-DevProcess
 
 
 # ============================================================
@@ -478,7 +484,7 @@ Write-Host "Previous JAR restored."
 
 
 # ============================================================
-# CLEAR LOGS FOR ROLLBACK
+# CLEAR LOGS
 # ============================================================
 
 if (Test-Path $applicationLog) {
@@ -520,6 +526,16 @@ Write-Host "PID: $($rollbackProcess.Id)"
 
 
 # ============================================================
+# SAVE ROLLBACK PID
+# ============================================================
+
+Set-Content `
+    -Path $pidFile `
+    -Value $rollbackProcess.Id `
+    -Force
+
+
+# ============================================================
 # WAIT FOR ROLLBACK
 # ============================================================
 
@@ -540,9 +556,7 @@ if ($rollbackStarted) {
 
     Write-Host "Previous DEV version is running."
     Write-Host "Port 8280 is listening."
-    Write-Host ""
 
-    # Remove failed staged JAR
     if (Test-Path $stagedJar) {
 
         Write-Host "Removing failed staged JAR..."
@@ -551,10 +565,6 @@ if ($rollbackStarted) {
             $stagedJar `
             -Force
     }
-
-    # IMPORTANT:
-    # Return failure to GitHub Actions because the new
-    # deployment failed, even though rollback succeeded.
 
     throw "New DEV version failed to start. Automatic rollback completed successfully."
 }

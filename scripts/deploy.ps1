@@ -1,26 +1,29 @@
 $ErrorActionPreference = "Stop"
 
 # ============================================================
-# HURECOM DEV DEPLOYMENT CONFIGURATION
+# HURECOM DEV DEPLOYMENT
 # ============================================================
 
 $deployPath = "C:\Apps\hurecom-dev"
-
 $stagedJar = "$deployPath\target\hurecom-0.0.1-SNAPSHOT.jar"
-
 $currentJar = "$deployPath\hurecom.jar"
-
 $backupJar = "$deployPath\hurecom.jar.bak"
+
+$logsPath = "$deployPath\logs"
+$applicationLog = "$logsPath\hurecom.log"
+$errorLog = "$logsPath\hurecom-error.log"
 
 $javaExe = "C:\Program Files\Java\jdk-17\bin\java.exe"
 
 $port = 8280
-
 $devUrl = "http://localhost:8280"
+
+# Startup timeout
+$startupTimeoutSeconds = 60
 
 
 # ============================================================
-# HELPER: CHECK DEV PORT
+# FUNCTIONS
 # ============================================================
 
 function Test-DevPort {
@@ -34,8 +37,87 @@ function Test-DevPort {
 }
 
 
+function Get-DevProcesses {
+
+    return @(Get-CimInstance Win32_Process | Where-Object {
+
+        $_.CommandLine -and
+        $_.CommandLine -match "server\.port=$port" -and
+        $_.CommandLine -match "hurecom"
+
+    })
+}
+
+
+function Stop-DevProcesses {
+
+    $processes = Get-DevProcesses
+
+    foreach ($process in $processes) {
+
+        Write-Host "Stopping DEV PID: $($process.ProcessId)"
+
+        Stop-Process `
+            -Id $process.ProcessId `
+            -Force `
+            -ErrorAction SilentlyContinue
+    }
+
+    Start-Sleep -Seconds 5
+}
+
+
+function Wait-ForDevStartup {
+
+    Write-Host ""
+    Write-Host "Waiting for DEV application startup..."
+
+    $elapsed = 0
+
+    while ($elapsed -lt $startupTimeoutSeconds) {
+
+        if (Test-DevPort) {
+
+            Write-Host "DEV port 8280 is listening."
+
+            return $true
+        }
+
+        Start-Sleep -Seconds 5
+
+        $elapsed += 5
+
+        Write-Host "Waiting... $elapsed/$startupTimeoutSeconds seconds"
+    }
+
+    return $false
+}
+
+
+function Show-ApplicationError {
+
+    Write-Host ""
+    Write-Host "=================================================="
+    Write-Host "APPLICATION ERROR LOG"
+    Write-Host "=================================================="
+
+    if (Test-Path $errorLog) {
+
+        Get-Content $errorLog -Tail 80
+
+    }
+    else {
+
+        Write-Host "Error log does not exist."
+
+    }
+
+    Write-Host ""
+}
+
+
 # ============================================================
-# START
+# PREPARE
 # ============================================================
 
 Write-Host ""
@@ -44,13 +126,23 @@ Write-Host "       HURECOM DEV DEPLOYMENT"
 Write-Host "=================================================="
 Write-Host ""
 
-Write-Host "Deployment path:"
-Write-Host $deployPath
-
-Write-Host "DEV port:"
-Write-Host $port
-
+Write-Host "Deployment path : $deployPath"
+Write-Host "DEV port        : $port"
+Write-Host "Java            : $javaExe"
 Write-Host ""
+
+
+# ============================================================
+# CREATE LOG DIRECTORY
+# ============================================================
+
+if (!(Test-Path $logsPath)) {
+
+    New-Item `
+        -ItemType Directory `
+        -Path $logsPath `
+        -Force | Out-Null
+}
 
 
 # ============================================================
@@ -79,6 +171,7 @@ if (!(Test-Path $stagedJar)) {
 
 $stagedInfo = Get-Item $stagedJar
 
+Write-Host ""
 Write-Host "Staged JAR:"
 Write-Host "  Name : $($stagedInfo.Name)"
 Write-Host "  Size : $($stagedInfo.Length) bytes"
@@ -86,54 +179,39 @@ Write-Host "  Date : $($stagedInfo.LastWriteTime)"
 
 
 # ============================================================
-# FIND DEV PROCESS
+# FIND CURRENT DEV
 # ============================================================
 
 Write-Host ""
-Write-Host "Checking DEV application..."
+Write-Host "Checking current DEV application..."
 
-$devProcesses = Get-CimInstance Win32_Process | Where-Object {
-
-    $_.CommandLine -and
-    $_.CommandLine -match "server\.port=8280" -and
-    $_.CommandLine -match "hurecom"
-}
-
+$devProcesses = Get-DevProcesses
 
 foreach ($process in $devProcesses) {
 
+    Write-Host ""
     Write-Host "DEV process found:"
-    Write-Host "  PID: $($process.ProcessId)"
-    Write-Host "  Command: $($process.CommandLine)"
+    Write-Host "  PID     : $($process.ProcessId)"
+    Write-Host "  Command : $($process.CommandLine)"
 }
 
 
 # ============================================================
-# STOP ONLY DEV
+# STOP DEV
 # ============================================================
 
 Write-Host ""
 Write-Host "Stopping DEV application..."
 
-foreach ($process in $devProcesses) {
-
-    Write-Host "Stopping DEV PID: $($process.ProcessId)"
-
-    Stop-Process `
-        -Id $process.ProcessId `
-        -Force `
-        -ErrorAction SilentlyContinue
-}
-
-Start-Sleep -Seconds 5
+Stop-DevProcesses
 
 
 # ============================================================
-# VERIFY DEV PORT IS FREE
+# VERIFY PORT FREE
 # ============================================================
 
 Write-Host ""
-Write-Host "Checking port 8280..."
+Write-Host "Checking port 8280 is free..."
 
 if (Test-DevPort) {
 
@@ -159,7 +237,7 @@ Write-Host "Port 8280 is free."
 if (Test-Path $currentJar) {
 
     Write-Host ""
-    Write-Host "Creating backup of current JAR..."
+    Write-Host "Creating backup..."
 
     Copy-Item `
         $currentJar `
@@ -174,7 +252,7 @@ else {
 
     Write-Host ""
     Write-Host "No existing hurecom.jar found."
-    Write-Host "This is the first deployment."
+    Write-Host "First deployment."
 }
 
 
@@ -195,247 +273,105 @@ Write-Host $currentJar
 
 
 # ============================================================
-# START NEW DEV VERSION
+# CLEAR OLD LOGS
+# ============================================================
+
+if (Test-Path $applicationLog) {
+
+    Remove-Item `
+        $applicationLog `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
+if (Test-Path $errorLog) {
+
+    Remove-Item `
+        $errorLog `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
+
+# ============================================================
+# START NEW VERSION
 # ============================================================
 
 Write-Host ""
 Write-Host "Starting new DEV application..."
 
-Start-Process `
+$process = Start-Process `
     -FilePath $javaExe `
     -ArgumentList "-jar", $currentJar, "--server.port=8280" `
-    -WorkingDirectory $deployPath
+    -WorkingDirectory $deployPath `
+    -RedirectStandardOutput $applicationLog `
+    -RedirectStandardError $errorLog `
+    -WindowStyle Hidden `
+    -PassThru
 
-Write-Host "Application start command executed."
+Write-Host ""
+Write-Host "New DEV process started."
+Write-Host "PID: $($process.Id)"
 
 
 # ============================================================
 # WAIT FOR STARTUP
 # ============================================================
 
-Write-Host ""
-Write-Host "Waiting 15 seconds for application startup..."
-
-Start-Sleep -Seconds 15
+$started = Wait-ForDevStartup
 
 
 # ============================================================
-# VERIFY NEW VERSION
+# NEW VERSION STARTED
 # ============================================================
 
-Write-Host ""
-Write-Host "Checking DEV port 8280..."
-
-if (Test-DevPort) {
-
-    Write-Host "Port 8280 is listening."
-
-}
-else {
+if ($started) {
 
     Write-Host ""
     Write-Host "=================================================="
-    Write-Host "       NEW VERSION FAILED TO START"
-    Write-Host "       STARTING AUTOMATIC ROLLBACK"
+    Write-Host "       DEV APPLICATION STARTED"
     Write-Host "=================================================="
     Write-Host ""
 
+    Write-Host "Testing HTTP endpoint..."
 
-    # ========================================================
-    # STOP FAILED VERSION
-    # ========================================================
+    try {
 
-    $failedProcesses = Get-CimInstance Win32_Process | Where-Object {
+        $response = Invoke-WebRequest `
+            -Uri $devUrl `
+            -UseBasicParsing `
+            -TimeoutSec 10 `
+            -ErrorAction Stop
 
-        $_.CommandLine -and
-        $_.CommandLine -match "server\.port=8280" -and
-        $_.CommandLine -match "hurecom\.jar"
+        Write-Host "HTTP Status: $($response.StatusCode)"
+
     }
+    catch {
 
+        if ($_.Exception.Response) {
 
-    foreach ($process in $failedProcesses) {
+            $statusCode = [int]$_.Exception.Response.StatusCode
 
-        Write-Host "Stopping failed DEV PID: $($process.ProcessId)"
+            Write-Host "HTTP Status: $statusCode"
 
-        Stop-Process `
-            -Id $process.ProcessId `
-            -Force `
-            -ErrorAction SilentlyContinue
-    }
+            if ($statusCode -eq 403) {
 
-    Start-Sleep -Seconds 3
+                Write-Host "HTTP 403 is expected because Spring Security protects the root endpoint."
 
+            }
+            else {
 
-    # ========================================================
-    # CHECK BACKUP
-    # ========================================================
-
-    if (!(Test-Path $backupJar)) {
-
-        throw "CRITICAL: Rollback failed because backup JAR does not exist."
-    }
-
-
-    # ========================================================
-    # RESTORE BACKUP
-    # ========================================================
-
-    Write-Host ""
-    Write-Host "Restoring previous JAR..."
-
-    Copy-Item `
-        $backupJar `
-        $currentJar `
-        -Force
-
-    Write-Host "Previous JAR restored."
-
-
-    # ========================================================
-    # START PREVIOUS VERSION
-    # ========================================================
-
-    Write-Host ""
-    Write-Host "Starting previous DEV version..."
-
-    Start-Process `
-        -FilePath $javaExe `
-        -ArgumentList "-jar", $currentJar, "--server.port=8280" `
-        -WorkingDirectory $deployPath
-
-    Start-Sleep -Seconds 15
-
-
-    # ========================================================
-    # VERIFY ROLLBACK
-    # ========================================================
-
-    Write-Host ""
-    Write-Host "Verifying rollback..."
-
-    if (!(Test-DevPort)) {
-
-        Write-Host ""
-        Write-Host "=================================================="
-        Write-Host "       CRITICAL ROLLBACK FAILURE"
-        Write-Host "=================================================="
-        Write-Host ""
-
-        throw "CRITICAL: Previous DEV version failed to start."
-    }
-
-
-    Write-Host ""
-    Write-Host "=================================================="
-    Write-Host "       AUTOMATIC ROLLBACK SUCCESSFUL"
-    Write-Host "=================================================="
-    Write-Host ""
-
-    throw "New DEV version failed. Previous version restored successfully."
-}
-
-
-# ============================================================
-# HTTP CHECK
-# ============================================================
-
-Write-Host ""
-Write-Host "Testing DEV HTTP endpoint..."
-
-try {
-
-    $response = Invoke-WebRequest `
-        -Uri $devUrl `
-        -UseBasicParsing `
-        -TimeoutSec 10 `
-        -ErrorAction Stop
-
-    Write-Host "HTTP Status: $($response.StatusCode)"
-}
-catch {
-
-    if ($_.Exception.Response) {
-
-        $statusCode = [int]$_.Exception.Response.StatusCode
-
-        Write-Host "HTTP Status: $statusCode"
-
-        # 403 is expected because Spring Security
-        # protects the root endpoint.
-
-        if ($statusCode -ne 403) {
-
-            Write-Host ""
-            Write-Host "Unexpected HTTP status."
-            Write-Host "Starting rollback..."
-
-            # Stop current version
-            $failedProcesses = Get-CimInstance Win32_Process | Where-Object {
-
-                $_.CommandLine -and
-                $_.CommandLine -match "server\.port=8280" -and
-                $_.CommandLine -match "hurecom\.jar"
+                Write-Host "Unexpected HTTP status."
+                $started = $false
             }
 
-            foreach ($process in $failedProcesses) {
-
-                Stop-Process `
-                    -Id $process.ProcessId `
-                    -Force `
-                    -ErrorAction SilentlyContinue
-            }
-
-            Start-Sleep -Seconds 3
-
-            # Restore backup
-            if (!(Test-Path $backupJar)) {
-
-                throw "CRITICAL: HTTP check failed and rollback backup does not exist."
-            }
-
-            Copy-Item `
-                $backupJar `
-                $currentJar `
-                -Force
-
-            # Start previous version
-            Start-Process `
-                -FilePath $javaExe `
-                -ArgumentList "-jar", $currentJar, "--server.port=8280" `
-                -WorkingDirectory $deployPath
-
-            Start-Sleep -Seconds 15
-
-            if (!(Test-DevPort)) {
-
-                throw "CRITICAL: HTTP check failed and rollback also failed."
-            }
-
-            throw "New DEV version failed HTTP verification. Rollback successful."
         }
+        else {
 
+            Write-Host "DEV HTTP endpoint could not be reached."
+            $started = $false
+        }
     }
-    else {
-
-        Write-Host "HTTP endpoint could not be reached."
-
-        throw "DEV HTTP verification failed."
-    }
-}
-
-
-# ============================================================
-# CLEAN STAGING JAR
-# ============================================================
-
-if (Test-Path $stagedJar) {
-
-    Write-Host ""
-    Write-Host "Removing staged JAR..."
-
-    Remove-Item `
-        $stagedJar `
-        -Force
 }
 
 
@@ -443,12 +379,197 @@ if (Test-Path $stagedJar) {
 # SUCCESS
 # ============================================================
 
+if ($started) {
+
+    Write-Host ""
+    Write-Host "=================================================="
+    Write-Host "       HURECOM DEV DEPLOYMENT SUCCESSFUL"
+    Write-Host "=================================================="
+    Write-Host ""
+
+    Write-Host "DEV URL : http://dev.hurecom.com"
+    Write-Host "PORT    : 8280"
+    Write-Host "JAR     : $currentJar"
+    Write-Host "PID     : $($process.Id)"
+    Write-Host ""
+
+    # Remove staging JAR
+    if (Test-Path $stagedJar) {
+
+        Write-Host "Removing staged JAR..."
+
+        Remove-Item `
+            $stagedJar `
+            -Force
+    }
+
+    Write-Host ""
+    Write-Host "Deployment completed successfully."
+
+    exit 0
+}
+
+
+# ============================================================
+# NEW VERSION FAILED
+# ============================================================
+
 Write-Host ""
 Write-Host "=================================================="
-Write-Host "       HURECOM DEV DEPLOYMENT SUCCESSFUL"
+Write-Host "       NEW VERSION FAILED TO START"
+Write-Host "       STARTING AUTOMATIC ROLLBACK"
 Write-Host "=================================================="
 Write-Host ""
-Write-Host "DEV URL : http://dev.hurecom.com"
-Write-Host "PORT    : 8280"
-Write-Host "JAR     : $currentJar"
+
+
+# ============================================================
+# SHOW NEW VERSION ERROR
+# ============================================================
+
+Show-ApplicationError
+
+
+# ============================================================
+# STOP FAILED VERSION
+# ============================================================
+
 Write-Host ""
+Write-Host "Stopping failed DEV version..."
+
+Stop-DevProcesses
+
+
+# ============================================================
+# VERIFY PORT FREE
+# ============================================================
+
+if (Test-DevPort) {
+
+    throw "CRITICAL: Port 8280 is still in use after stopping failed version."
+}
+
+
+# ============================================================
+# CHECK BACKUP
+# ============================================================
+
+if (!(Test-Path $backupJar)) {
+
+    throw "CRITICAL: Rollback backup does not exist: $backupJar"
+}
+
+Write-Host ""
+Write-Host "Rollback backup found."
+
+
+# ============================================================
+# RESTORE PREVIOUS JAR
+# ============================================================
+
+Write-Host ""
+Write-Host "Restoring previous JAR..."
+
+Copy-Item `
+    $backupJar `
+    $currentJar `
+    -Force
+
+Write-Host "Previous JAR restored."
+
+
+# ============================================================
+# CLEAR LOGS FOR ROLLBACK
+# ============================================================
+
+if (Test-Path $applicationLog) {
+
+    Remove-Item `
+        $applicationLog `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
+if (Test-Path $errorLog) {
+
+    Remove-Item `
+        $errorLog `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
+
+# ============================================================
+# START PREVIOUS VERSION
+# ============================================================
+
+Write-Host ""
+Write-Host "Starting previous DEV version..."
+
+$rollbackProcess = Start-Process `
+    -FilePath $javaExe `
+    -ArgumentList "-jar", $currentJar, "--server.port=8280" `
+    -WorkingDirectory $deployPath `
+    -RedirectStandardOutput $applicationLog `
+    -RedirectStandardError $errorLog `
+    -WindowStyle Hidden `
+    -PassThru
+
+Write-Host ""
+Write-Host "Rollback process started."
+Write-Host "PID: $($rollbackProcess.Id)"
+
+
+# ============================================================
+# WAIT FOR ROLLBACK
+# ============================================================
+
+$rollbackStarted = Wait-ForDevStartup
+
+
+# ============================================================
+# ROLLBACK SUCCESS
+# ============================================================
+
+if ($rollbackStarted) {
+
+    Write-Host ""
+    Write-Host "=================================================="
+    Write-Host "       AUTOMATIC ROLLBACK SUCCESSFUL"
+    Write-Host "=================================================="
+    Write-Host ""
+
+    Write-Host "Previous DEV version is running."
+    Write-Host "Port 8280 is listening."
+    Write-Host ""
+
+    # Remove failed staged JAR
+    if (Test-Path $stagedJar) {
+
+        Write-Host "Removing failed staged JAR..."
+
+        Remove-Item `
+            $stagedJar `
+            -Force
+    }
+
+    # IMPORTANT:
+    # Return failure to GitHub Actions because the new
+    # deployment failed, even though rollback succeeded.
+
+    throw "New DEV version failed to start. Automatic rollback completed successfully."
+}
+
+
+# ============================================================
+# CRITICAL ROLLBACK FAILURE
+# ============================================================
+
+Write-Host ""
+Write-Host "=================================================="
+Write-Host "       CRITICAL ROLLBACK FAILURE"
+Write-Host "=================================================="
+Write-Host ""
+
+Show-ApplicationError
+
+throw "CRITICAL: Previous DEV version also failed to start on port 8280."

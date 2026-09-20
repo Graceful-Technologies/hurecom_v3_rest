@@ -25,10 +25,14 @@ public class JwtFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
 
+    private final JwtTokenBlacklist jwtTokenBlacklist;
+
     private final UserDetailsService userDetailsService;
 
-    public JwtFilter(JwtUtil jwtUtil, UserDetailsService userDetailsService) {
+    public JwtFilter(JwtUtil jwtUtil, JwtTokenBlacklist jwtTokenBlacklist,
+                     UserDetailsService userDetailsService) {
         this.jwtUtil = jwtUtil;
+        this.jwtTokenBlacklist = jwtTokenBlacklist;
         this.userDetailsService = userDetailsService;
     }
 
@@ -44,6 +48,11 @@ public class JwtFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);
             try {
+                if (jwtTokenBlacklist.isRevoked(token)) {
+                    writeUnauthorized(response, "Token has been revoked");
+                    return;
+                }
+
                 String username = jwtUtil.extractUsername(token);
 
                 // Only authenticate if not already set
@@ -63,12 +72,16 @@ public class JwtFilter extends OncePerRequestFilter {
                 }
             } catch (Exception e) {
                 log.warn("JwtFilter :: Invalid JWT token: {}", e.getMessage());
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                response.setContentType("application/json");
-                response.getWriter().write("{\"error\": \"Invalid or expired token\"}");
+                writeUnauthorized(response, "Invalid or expired token");
                 return;
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    private void writeUnauthorized(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json");
+        response.getWriter().write("{\"success\":false,\"message\":\"" + message + "\"}");
     }
 }

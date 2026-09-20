@@ -3,6 +3,7 @@ package com.gt.hurecom.service.impl.auth;
 import com.gt.hurecom.dto.auth.LoginRequest;
 import com.gt.hurecom.dto.auth.LoginResponse;
 import com.gt.hurecom.security.JwtUtil;
+import com.gt.hurecom.security.JwtTokenBlacklist;
 import com.gt.hurecom.service.auth.AuthService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,9 +21,13 @@ public class AuthServiceImpl implements AuthService {
 
     private final JwtUtil jwtUtil;
 
-    public AuthServiceImpl(AuthenticationManager authenticationManager, JwtUtil jwtUtil) {
+    private final JwtTokenBlacklist jwtTokenBlacklist;
+
+    public AuthServiceImpl(AuthenticationManager authenticationManager, JwtUtil jwtUtil,
+                           JwtTokenBlacklist jwtTokenBlacklist) {
         this.authenticationManager = authenticationManager;
         this.jwtUtil = jwtUtil;
+        this.jwtTokenBlacklist = jwtTokenBlacklist;
     }
 
     @Override
@@ -43,6 +48,17 @@ public class AuthServiceImpl implements AuthService {
 
         log.debug("AuthService :: login :: JWT token generated for user: {}", request.getUsername());
         return response;
+    }
+
+    @Override
+    public boolean logout(String token) {
+        if (!jwtUtil.isValid(token)) {
+            return false;
+        }
+
+        jwtTokenBlacklist.revoke(token, jwtUtil.extractExpiration(token));
+        log.debug("AuthService :: logout :: JWT token revoked");
+        return true;
     }
 
 }

@@ -6,4 +6,6 @@ import com.gt.hurecom.dto.auth.LoginResponse;
 public interface AuthService {
 
 	LoginResponse login(LoginRequest loginRequest);
+
+	boolean logout(String token);
 }

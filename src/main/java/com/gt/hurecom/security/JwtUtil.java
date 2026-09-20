@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.util.Date;
+import java.time.Instant;
 
 @Component
 public class JwtUtil {
@@ -51,6 +52,22 @@ public class JwtUtil {
         return extractAllClaims(token)
                 .getExpiration()
                 .before(new Date());
+    }
+
+    public Instant extractExpiration(String token) {
+        return extractAllClaims(token).getExpiration().toInstant();
+    }
+
+    public boolean isValid(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            return claims.getSubject() != null
+                    && claims.getExpiration() != null
+                    && !claims.getExpiration().before(new Date());
+        } catch (Exception e) {
+            log.warn("JwtUtil :: Token validation failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     public boolean validate(String token, String username) {
